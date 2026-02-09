@@ -145,6 +145,7 @@ def compute_scenario(
         "months_heifer": heifer_nonprofit_months,
         "months_kpn": kpn_exit_months,
         "rate_concept": conception_rate,
+        "period_ext": ext_period_y,
         
         # 상세 데이터
         "v_cull": val_cull, "n_cull": annual_culls,
@@ -209,7 +210,7 @@ with st.sidebar:
         ext_sell_n = st.number_input("비육우 출하(두)", value=50, step=1)
         ext_sell_p = input_with_comma("비육우 출하가", 9000000, key="esp")
         ext_cost_y = input_with_comma("비육우 유지비", 3500000, key="ecy")
-        ext_period = st.number_input("비육우 기간(년)", 2.5)
+        ext_period = st.number_input("비육우 기간(년)", value=2.5, min_value=0.1, step=0.1, format="%.1f")
 
 t1, t2 = st.tabs(["A 설정", "B 설정"])
 birth_total = base_cows * conception_rate
@@ -224,7 +225,7 @@ def get_inputs(tab, key):
         culls = c1.number_input(f"[{key}] 연간 도태(두)", value=15, key=f"c_{key}")
         
         c2.markdown(f"**[{key}] 암송아지 분배**")
-        c2.text_input(f"대체우 선발(두) [고정]", value=f"{culls} (자동)", disabled=True, key=f"repl_disp_{key}")
+        c2.text_input(f"대체우 선발(두) [고정]", value=f"{culls} (자동)", disabled=True, key=f"repl_disp_{key}_{culls}")
         fsell = c2.number_input(f"판매(두)", value=0, key=f"fs_{key}")
         ffat_in = c2.number_input(f"자가비육 투입(In)", value=10, key=f"fi_{key}")
         ffat_out = c2.number_input(f"자가비육 출하(Out)", value=10, key=f"fo_{key}")
@@ -443,7 +444,7 @@ def make_excel_view(res):
     })
     data.append({
         "Category": "외부", "Item": "유지비", 
-        "Basis": f"재고 {res['n_ext_stock']:.1f}두", 
+        "Basis": f"{res['n_ext_sell']}두 x {res['period_ext']}년 x {fmt_money(res['cost_y_ext'])}", 
         "Amount": -res["c_ext_maint"]
     })
     
