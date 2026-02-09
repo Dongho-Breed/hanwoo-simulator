@@ -4,7 +4,7 @@ import altair as alt
 import math
 
 # 페이지 설정
-st.set_page_config(page_title="한우 통합 경제성 분석 (V4.6)", layout="wide")
+st.set_page_config(page_title="한우 통합 경제성 분석 (V4.7)", layout="wide")
 
 # ---------------------------
 # 1. Helpers & Callbacks
@@ -151,8 +151,8 @@ def compute_scenario(
 # ---------------------------
 # 3. UI & Inputs
 # ---------------------------
-st.title("한우 통합 경제성 분석 (V4.6)")
-st.caption("상세 계산 내역 하단 배치 및 분석 탭 그래프 단순화")
+st.title("한우 통합 경제성 분석 (V4.7)")
+st.caption("순이익 비교 그래프(A vs B) 및 파이차트 시인성 개선")
 
 with st.sidebar:
     st.header("1. 기본 환경 설정")
@@ -291,49 +291,40 @@ def make_excel_view(res):
 # ---------------------------
 # Chart Generators
 # ---------------------------
-# [수정할 함수]
-def create_comparison_line_chart(res_a, res_b):
+def create_net_profit_chart(res_a, res_b):
     years = list(range(1, 11))
     chart_data = []
-    for r in [res_a, res_b]:
-        for y in years:
-            chart_data.append({"Scenario": r['Scenario'], "Year": y, "Type": "매출", "Value": r['Rev Final']})
-            chart_data.append({"Scenario": r['Scenario'], "Year": y, "Type": "비용", "Value": r['Cost Final']})
-            chart_data.append({"Scenario": r['Scenario'], "Year": y, "Type": "순이익", "Value": r['Net Final']})
+    
+    # 순이익만 추출
+    for y in years:
+        chart_data.append({"Scenario": "시나리오 A", "Year": y, "Value": res_a['Net Final']})
+        chart_data.append({"Scenario": "시나리오 B", "Year": y, "Value": res_b['Net Final']})
     
     df_chart = pd.DataFrame(chart_data)
     
-    # 색상 지정: 매출=파랑, 비용=빨강, 순이익=초록
-    color_scale = alt.Scale(
-        domain=['매출', '비용', '순이익'],
-        range=['#1f77b4', '#d62728', '#2ca02c']  # Blue, Red, Green
-    )
-    
+    # 색상 지정: A=파랑, B=빨강
+    color_scale = alt.Scale(domain=["시나리오 A", "시나리오 B"], range=["#1f77b4", "#d62728"])
+
     return alt.Chart(df_chart).mark_line(point=True).encode(
         x=alt.X("Year:O", axis=alt.Axis(labelAngle=0)),
         y=alt.Y("Value:Q", axis=alt.Axis(format=",.0f")),
-        # [핵심 변경] 색상을 'Type(항목)'에 매핑
-        color=alt.Color("Type:N", scale=color_scale, title="항목"),
-        # [핵심 변경] 선 스타일을 'Scenario(시나리오)'에 매핑 (실선 vs 점선)
-        strokeDash=alt.StrokeDash("Scenario:N", title="시나리오"),
-        tooltip=["Scenario", "Year", "Type", alt.Tooltip("Value", format=",.0f")]
-    ).properties(width='container', height=300, title="A vs B 시나리오 비교 (10년 추이)")
+        color=alt.Color("Scenario:N", scale=color_scale, title="시나리오"),
+        tooltip=["Scenario", "Year", alt.Tooltip("Value", format=",.0f")]
+    ).properties(width='container', height=300, title="순이익 비교 (10년 추이)")
 
 def create_pie_chart(res_data):
     df_cost = pd.DataFrame(res_data['Cost Breakdown'])
-    base = alt.Chart(df_cost).encode(theta=alt.Theta("Value", stack=True))
+    
+    # 텍스트 오버레이 제거 -> 범례(Legend)와 툴팁만 사용
+    base = alt.Chart(df_cost).encode(
+        theta=alt.Theta("Value", stack=True)
+    )
     pie = base.mark_arc(outerRadius=100).encode(
-        color=alt.Color("Category"),
-        order=alt.Order("Value", sort="descending"),
+        color=alt.Color("Category", title="비용 항목"),
         tooltip=["Category", alt.Tooltip("Value", format=",.0f")]
     )
-    text = base.mark_text(radius=120).encode(
-        text=alt.Text("Value", format=",.0f"),
-        order=alt.Order("Value", sort="descending"),
-        color=alt.value("black")
-    )
-    return (pie + text).properties(width='container', height=300, title=f"{res_data['Scenario']} 비용 구조")
-
+    # 글씨 잘림 방지를 위해 mark_text 제거함
+    return pie.properties(width='container', height=300, title=f"{res_data['Scenario']} 비용 구조")
 
 # ---------------------------
 # Tabs Layout
@@ -353,17 +344,16 @@ res_b = run_base_calc(sc_name_b, inputs_b)
 # --- Tab A Content ---
 with tab_a:
     st.divider()
-    # 1. Metric
     st.metric("순이익 (Net Profit)", f"{fmt_money(res_a['Net Final'])}원")
     
-    # 2. Charts (Upper)
     c1, c2 = st.columns([1.5, 1])
     with c1:
-        st.altair_chart(create_comparison_line_chart(res_a, res_b), use_container_width=True)
+        # [변경] 순이익만 보여주는 그래프
+        st.altair_chart(create_net_profit_chart(res_a, res_b), use_container_width=True)
     with c2:
+        # [변경] 글씨 잘림 없는 파이 차트
         st.altair_chart(create_pie_chart(res_a), use_container_width=True)
 
-    # 3. Detail Table (Bottom)
     st.markdown("---")
     st.subheader("📋 상세 계산 내역")
     df_detail_a = make_excel_view(res_a)
@@ -372,17 +362,16 @@ with tab_a:
 # --- Tab B Content ---
 with tab_b:
     st.divider()
-    # 1. Metric
     st.metric("순이익 (Net Profit)", f"{fmt_money(res_b['Net Final'])}원")
     
-    # 2. Charts (Upper)
     c1, c2 = st.columns([1.5, 1])
     with c1:
-        st.altair_chart(create_comparison_line_chart(res_a, res_b), use_container_width=True)
+        # [변경] 순이익만 보여주는 그래프
+        st.altair_chart(create_net_profit_chart(res_a, res_b), use_container_width=True)
     with c2:
+        # [변경] 글씨 잘림 없는 파이 차트
         st.altair_chart(create_pie_chart(res_b), use_container_width=True)
 
-    # 3. Detail Table (Bottom)
     st.markdown("---")
     st.subheader("📋 상세 계산 내역")
     df_detail_b = make_excel_view(res_b)
@@ -431,7 +420,7 @@ with tab_analysis:
         # B. Added Revenue
         premium_per_head = (d_cw * econ_cw) + (d_ms * econ_ms) + (d_ema * econ_ema) + (d_bft * econ_bft)
         
-        # Total Sold Heads (From Scenario B)
+        # Total Sold Heads
         total_sold = (res_b['n_fat_out_f'] + res_b['n_fat_out_m'] + 
                       res_b['n_ext_sell'] + 
                       res_b['n_calf_f'] + res_b['n_calf_m'])
@@ -441,7 +430,7 @@ with tab_analysis:
         # C. Net Profit
         net_profit = added_revenue - added_cost
         
-        # [수정된 분석 탭 차트 코드]
+        # Analysis Chart (Line Chart with Points)
         chart_df = pd.DataFrame([
             {"Type": "1. 유전적 수익", "Amount": added_revenue, "Category": "수익"},
             {"Type": "2. 추가 비용", "Amount": -added_cost, "Category": "비용"},
@@ -454,13 +443,13 @@ with tab_analysis:
             range=['#1f77b4', '#d62728', '#2ca02c']
         )
         
-        # 기본 선 (회색 연결선)
+        # 회색 연결선
         line = alt.Chart(chart_df).mark_line(color='gray').encode(
             x=alt.X("Type", sort=None, title="구분"),
             y=alt.Y("Amount", title="금액")
         )
         
-        # 포인트 (색상 구분)
+        # 색상 포인트
         points = alt.Chart(chart_df).mark_circle(size=150).encode(
             x=alt.X("Type", sort=None),
             y="Amount",
@@ -468,11 +457,10 @@ with tab_analysis:
             tooltip=[alt.Tooltip("Type"), alt.Tooltip("Amount", format=",.0f")]
         )
         
-        # 겹쳐서 그리기
-        c = (line + points).properties(height=250, title="경제성 분석 결과 (색상 구분)")
+        c = (line + points).properties(height=250, title="경제성 분석 결과 (상세)")
         st.altair_chart(c, use_container_width=True)
 
-    # D. Detailed Table (Moved to Bottom)
+    # D. Detailed Table
     st.markdown("---")
     st.subheader("📋 상세 계산 내역")
     
@@ -500,3 +488,4 @@ with tab_analysis:
     
     df_analysis = pd.DataFrame(analysis_data)
     st.dataframe(df_analysis.style.format({"금액 (Amount)": "{:,.0f}"}), use_container_width=True, hide_index=True)
+    
