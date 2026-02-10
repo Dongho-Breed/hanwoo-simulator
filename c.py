@@ -7,7 +7,7 @@ import plotly.express as px
 from scipy.optimize import minimize
 
 # 페이지 설정
-st.set_page_config(page_title="🐂 한우 통합 플랫폼", layout="wide")
+st.set_page_config(page_title="🐂 한우 경영·사료 최적화 플랫폼", layout="wide")
 
 # ---------------------------
 # 0. 데이터 초기화
@@ -90,24 +90,20 @@ def input_with_comma(label, value, key=None):
     except:
         return float(value)
 
-# [수정] 비용 계산 함수 (모드에 따라 제외 항목 처리)
 def calculate_cost_from_table(df, mode="경영비"):
     exclude_items = ["자가노동비", "자본용역비", "토지용역비"]
     total = 0
     for _, row in df.iterrows():
         item = row['항목']
-        # '금액(천원/년)' 컬럼이 있으면 1000 곱하기
         if '금액(천원/년)' in df.columns:
             amount = row['금액(천원/년)'] * 1000
         else:
             amount = row['금액(원/년)']
-            
         if mode == "경영비" and item in exclude_items:
             continue
         total += amount
     return total
 
-# [추가] 기회비용(제외되는 항목) 합계만 따로 계산하는 헬퍼 함수
 def calculate_opportunity_cost(df):
     target_items = ["자가노동비", "자본용역비", "토지용역비"]
     total_opp = 0
@@ -127,17 +123,16 @@ def calculate_avg_price(df):
         weighted_sum += (row["Ratio(%)"] / 100) * (row["Price(KRW/kg)"] * row["Weight(kg)"])
     return int(weighted_sum)
 
-st.title("🐂 한우 통합 플랫폼")
+st.title("🐂 한우 경영·사료 최적화 플랫폼")
 
 # ---------------------------
 # 2. 사이드바 UI
 # ---------------------------
 with st.sidebar:
     st.header("1. 분석 기준 설정")
-    cost_mode = st.radio("비용 산출 기준", ["경영비 기준 (실지출, 일반비소계)", "생산비 기준 (비용합게, 기회비용(자가노동비 등) 포함)"], index=0)
+    cost_mode = st.radio("비용 산출 기준", ["경영비 기준 (실지출, 일반비소계)", "생산비 기준 (비용합계, 기회비용(자가노동비 등) 포함)"], index=0)
     mode_key = "경영비" if "경영비" in cost_mode else "생산비"
     
-    # 계산 로직
     calc_breed_cost = calculate_cost_from_table(st.session_state.df_cost_breed, mode_key)
     calc_fatten_cost = calculate_cost_from_table(st.session_state.df_cost_fatten, mode_key)
     calc_cow_price = calculate_avg_price(st.session_state.df_cow)
@@ -149,10 +144,8 @@ with st.sidebar:
     with st.expander("A. 농장 공통 설정", expanded=False):
         base_cows = st.number_input("기초 번식우(두)", value=100, step=10, format="%d")
         if 'conception_rate' not in st.session_state: st.session_state.conception_rate = 0.70
-        
         conception_rate = st.number_input("수태율 (0~1)", value=st.session_state.conception_rate, step=0.01, key='sb_concept')
         st.session_state.conception_rate = conception_rate
-
         female_birth_ratio = st.number_input("암 성비 (0~1)", value=0.50, step=0.01)
         heifer_nonprofit_months = st.number_input("대체우 무수익(월)", value=18)
         calf_common_months = st.number_input("송아지 공통육성(월)", value=6)
@@ -415,12 +408,29 @@ with tab_analysis:
     with col_result:
         repl_unit_cost = (heifer_nonprofit_months / 12.0) * cow_cost_y
         added_cost = extra_repl * repl_unit_cost
-        premium_per_head = (d_cw * econ_cw) + (d_ms * econ_ms) + (d_ema * econ_ema) + (d_bft * econ_bft)
-        total_sold = (res_b['n_fat_out_f'] + res_b['n_fat_out_m'] + res_b['n_ext_sell'] + res_b['n_calf_f'] + res_b['n_calf_m'])
-        added_revenue = total_sold * premium_per_head
-        net_profit = added_revenue - added_cost
+        
+        # 1. Premium per Head Calculation
+        val_cw = d_cw * econ_cw
+        val_ms = d_ms * econ_ms
+        val_ema = d_ema * econ_ema
+        val_bft = d_bft * econ_bft
+        premium_per_head = val_cw + val_ms + val_ema + val_bft
+        
+        # 2. Volume Calculation (Fattening Cattle Only)
+        # Target = Auto-fattened (F/M) + External Sales (Fattened)
+        # Note: Selling calves (n_calf_f/m) is excluded from carcass premium
+        target_cattle_a = res_a['n_fat_out_f'] + res_a['n_fat_out_m'] + res_a['n_ext_sell']
+        target_cattle_b = res_b['n_fat_out_f'] + res_b['n_fat_out_m'] + res_b['n_ext_sell']
+        
+        # 3. Revenue Calculation
+        added_revenue_a = target_cattle_a * premium_per_head # Hypothetical
+        added_revenue_b = target_cattle_b * premium_per_head # Realized for B
+        
+        # Net Profit = Benefit of B (Genetic Revenue) - Cost of B (Extra Replacement)
+        net_profit = added_revenue_b - added_cost
+        
         chart_df = pd.DataFrame([
-            {"Type": "1. 유전적 수익", "Amount": added_revenue, "Category": "수익"},
+            {"Type": "1. 유전적 수익", "Amount": added_revenue_b, "Category": "수익"},
             {"Type": "2. 추가 비용", "Amount": -added_cost, "Category": "비용"},
             {"Type": "3. 분석 순이익", "Amount": net_profit, "Category": "순이익"}
         ])
@@ -432,6 +442,37 @@ with tab_analysis:
             tooltip=[alt.Tooltip("Type"), alt.Tooltip("Amount", format=",.0f")]
         ).properties(title="경제적 분석 결과 비교")
         st.altair_chart(chart, use_container_width=True)
+
+        # ---------------------------------------------------------------------
+        # DETAILED CALCULATION SECTION (NEW)
+        # ---------------------------------------------------------------------
+        st.divider()
+        st.subheader("상세 계산 내역")
+        
+        # Step 1
+        st.markdown("**1. 1두당 개량 가치 (Premium) 산출**")
+        df_prem = pd.DataFrame({
+            "형질": ["도체중(CW)", "근내지방(MS)", "등심단면적(EMA)", "등지방(BFT)"],
+            "증분(Delta)": [d_cw, d_ms, d_ema, d_bft],
+            "단가(원)": [econ_cw, econ_ms, econ_ema, econ_bft],
+            "가치(원)": [val_cw, val_ms, val_ema, val_bft]
+        })
+        st.dataframe(df_prem, hide_index=True, use_container_width=True)
+        st.caption(f"합계 (두당 가치): {fmt_money(premium_per_head)}원")
+        
+        # Step 2
+        st.markdown("**2. 시나리오별 비육우 출하 두수 및 수익**")
+        st.caption("※ 계산 대상: 자가비육 출하(암/수) + 외부비육 출하 (송아지 판매 제외)")
+        df_vol = pd.DataFrame([
+            {"시나리오": "시나리오 A", "비육우 출하(두)": target_cattle_a, "적용단가(원)": premium_per_head, "유전적 수익(가정)": added_revenue_a},
+            {"시나리오": "시나리오 B", "비육우 출하(두)": target_cattle_b, "적용단가(원)": premium_per_head, "유전적 수익(실제)": added_revenue_b}
+        ])
+        st.dataframe(df_vol, hide_index=True, use_container_width=True)
+        
+        # Step 3
+        st.markdown("**3. 최종 순이익 산출**")
+        st.write("순이익 = (시나리오 B 유전적 수익) - (교체율 증가 비용)")
+        st.write(f"{fmt_money(net_profit)}원 = {fmt_money(added_revenue_b)}원 - {fmt_money(added_cost)}원")
 
 # --- Tab Revenue ---
 with tab_revenue:
@@ -768,7 +809,7 @@ with tab_sim:
 
     st.divider()
     
-    st.subheader(" 원료별 영양성분 및 단가표")
+    st.subheader("📊 원료별 영양성분 및 단가표")
     df_feeds_info = pd.DataFrame(st.session_state.feeds_db)
     df_feeds_info = df_feeds_info[['name', 'cat', 'price', 'tdn', 'cp', 'ndf']]
     df_feeds_info.columns = ['원료명', '분류', '단가(원/kg)', 'TDN(%)', 'CP(%)', 'NDF(%)']
