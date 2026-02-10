@@ -322,24 +322,47 @@ def get_alloc_inputs(tab, key):
     with tab:
         st.info(f"생산 가이드 | 암송아지: **{birth_female:.1f}두** | 수송아지: **{birth_male:.1f}두**")
         c1, c2, c3 = st.columns(3)
+        
+        # 1. 교체율 및 대체우 설정 (c1)
         culls = c1.number_input(f"[{key}] 연간 도태(두)", value=15, key=f"c_{key}")
         repl_rate = (culls / base_cows) * 100 if base_cows > 0 else 0
         c1.metric(f"교체율 ({key})", f"{repl_rate:.1f}%")
+        
+        # 2. 암송아지 분배 (c2)
         c2.markdown(f"**[{key}] 암송아지 분배**")
         c2.text_input(f"대체우 선발 [고정]", value=f"{culls} (자동)", disabled=True, key=f"rd_{key}_{culls}")
         fsell = c2.number_input(f"판매(두)", value=0, key=f"fs_{key}")
         ffat_in = c2.number_input(f"자가비육 투입", value=10, key=f"fi_{key}")
         ffat_out = c2.number_input(f"자가비육 출하", value=10, key=f"fo_{key}")
+        
         if ffat_out > ffat_in: c2.error(f"오류: 투입({ffat_in}) < 출하({ffat_out})")
+        
         floss = c2.number_input(f"폐사(두)", value=0, key=f"fl_{key}")
         loss_months = c2.number_input(f"폐사 월령", value=4, key=f"lm_{key}")
+
+        # [추가됨] 암송아지 합계 검증
+        # 대체우(culls) + 판매 + 투입 + 폐사
+        sum_female = culls + fsell + ffat_in + floss
+        if sum_female > birth_female:
+            c2.error(f"⚠️ 합계({sum_female}두)가 생산({birth_female:.1f}두)을 초과했습니다.")
+
+        # 3. 수송아지 분배 (c3)
         c3.markdown(f"**[{key}] 수송아지 분배**")
         kpn = c3.number_input(f"KPN 위탁", value=10, key=f"k_{key}")
         msell = c3.number_input(f"판매(두)", value=0, key=f"ms_{key}")
         mfat_in = c3.number_input(f"자가비육 투입", value=25, key=f"mi_{key}")
         mfat_out = c3.number_input(f"자가비육 출하", value=25, key=f"mo_{key}")
+        
         if mfat_out > mfat_in: c3.error(f"오류: 투입({mfat_in}) < 출하({mfat_out})")
+        
         mloss = c3.number_input(f"폐사(두)", value=0, key=f"ml_{key}")
+
+        # [추가됨] 수송아지 합계 검증
+        # KPN + 판매 + 투입 + 폐사 (출하는 투입에서 나오는 것이므로 합계 검증에서는 제외하는 것이 논리적으로 맞습니다)
+        sum_male = kpn + msell + mfat_in + mloss
+        if sum_male > birth_male:
+            c3.error(f"⚠️ 합계({sum_male}두)가 생산({birth_male:.1f}두)을 초과했습니다.")
+
         return {
             "annual_culls": culls, "female_calf_sell": fsell, "female_fatten_in": ffat_in, "female_fatten_out": ffat_out, "female_loss": floss, "loss_months": loss_months,
             "kpn_male": kpn, "male_calf_sell": msell, "male_fatten_in": mfat_in, "male_fatten_out": mfat_out, "male_loss": mloss, "repl_rate": repl_rate
