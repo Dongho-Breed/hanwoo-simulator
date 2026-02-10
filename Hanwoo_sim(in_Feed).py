@@ -116,7 +116,6 @@ calc_cow_price = calculate_avg_price(st.session_state.df_cow)
 calc_steer_price = calculate_avg_price(st.session_state.df_steer)
 
 st.title("한우 통합 경제성 분석 (V5.4.1)")
-st.caption("모든 탭 기능 정상화 및 사료 최적화 기능 탑재")
 
 with st.sidebar:
     st.header("1. 분석 기준 설정")
@@ -133,9 +132,9 @@ with st.sidebar:
         if 'conception_rate' not in st.session_state: st.session_state.conception_rate = 0.75
         conception_rate = st.number_input("수태율 (0~1)", value=st.session_state.conception_rate, step=0.01, key='sb_concept')
         female_birth_ratio = st.number_input("암 성비 (0~1)", value=0.50, step=0.01)
-        heifer_nonprofit_months = st.number_input("대체우 무수익(월)", 19)
-        calf_common_months = st.number_input("송아지 공통육성(월)", 7)
-        kpn_exit_months = st.number_input("KPN 종료월령", 7)
+        heifer_nonprofit_months = st.number_input("대체우 무수익(월)", value=19)
+        calf_common_months = st.number_input("송아지 공통육성(월)", value=7)
+        kpn_exit_months = st.number_input("KPN 종료월령", value=7)
         
     with st.expander("B. 비용 (원/년/두) - 자동 연동", expanded=True):
         st.caption(f"※ {mode_key} 기준으로 자동 계산된 값입니다.")
@@ -153,8 +152,8 @@ with st.sidebar:
         p_cull = input_with_comma("도태우", 2500000, key="p_cull")
         
     with st.expander("D. 출하월령", expanded=False):
-        ship_m_f = st.number_input("암 출하월령", 30)
-        ship_m_m = st.number_input("수 출하월령", 30)
+        ship_m_f = st.number_input("암 출하월령", value=30)
+        ship_m_m = st.number_input("수 출하월령", value=30)
         
     with st.expander("E. 외부 비육 농가", expanded=False):
         ext_buy_n = st.number_input("수송아지 매입(두)", value=50, step=1)
@@ -164,7 +163,7 @@ with st.sidebar:
         ext_cost_y = input_with_comma("비육우 유지비", 2165000, key="ecy") 
         ext_period = st.number_input("비육우 기간(년)", value=2.5, min_value=0.1, step=0.1, format="%.1f")
 
-    st.header("2. 형질별 경제적 가치")
+    st.header("3. 형질별 경제적 가치")
     with st.expander("F. 개량 가치 (원/단위)", expanded=True):
         econ_cw = input_with_comma("도체중 (CW, kg)", 18564, key="ec_cw")
         econ_ms = input_with_comma("근내지방 (MS)", 591204, key="ec_ms")
@@ -211,7 +210,7 @@ def compute_scenario(name, base_cows, conception_rate, female_birth_ratio, heife
 
     val_ext_rev = ext_sell_n * ext_sell_p
     val_ext_buy = ext_buy_n * ext_buy_p
-    val_ext_maint = (ext_sell_n * ext_period_y) * ext_cost_y
+    val_ext_maint = (ext_buy_n * ext_period_y) * ext_cost_y
     net_external = val_ext_rev - val_ext_buy - val_ext_maint
 
     net_final = net_internal + net_external
@@ -267,7 +266,7 @@ def make_excel_view(res):
     data.append({"구분": "비용(손실)", "항목": "수송아지 폐사", "산출 근거": f"{res['n_loss_m']}두 * ({fmt_money(res['cost_y_cow'])}/{res['rate_concept']}) * ({res['loss_months']}/12)", "금액 (Amount)": -res["val_loss_m"]})
     data.append({"구분": "외부", "항목": "비육우 매출", "산출 근거": f"{res['n_ext_sell']}두 * {fmt_money(res['p_ext_sell'])}", "금액 (Amount)": res["v_ext_rev"]})
     data.append({"구분": "외부", "항목": "송아지 매입", "산출 근거": f"{res['n_ext_buy']}두 * {fmt_money(res['p_ext_buy'])}", "금액 (Amount)": -res["c_ext_buy"]})
-    data.append({"구분": "외부", "항목": "사육 유지비", "산출 근거": f"{res['n_ext_sell']}두 * {res['period_ext']}년 * {fmt_money(res['cost_y_ext'])}", "금액 (Amount)": -res["c_ext_maint"]})
+    data.append({"구분": "외부", "항목": "사육 유지비", "산출 근거": f"{res['n_ext_buy']}두 x {res['period_ext']}년 x {fmt_money(res['cost_y_ext'])}", "금액 (Amount)": -res["c_ext_maint"]})
     data.append({"구분": "결과", "항목": "순이익 (Net Profit)", "산출 근거": "수익 - 비용", "금액 (Amount)": res["Net Final"]})
     return pd.DataFrame(data)
 
@@ -321,7 +320,7 @@ def get_alloc_inputs(tab, key):
             "kpn_male": kpn, "male_calf_sell": msell, "male_fatten_in": mfat_in, "male_fatten_out": mfat_out, "male_loss": mloss, "repl_rate": repl_rate
         }
 
-tab_a, tab_b, tab_analysis, tab_revenue, tab_cost, tab_feed_opt = st.tabs(["교체율 설정 A", "교체율 설정 B", "분석: 교체율 vs 개량효과", " [부록] 비육우 매출 상세", " [부록] 비용 상세 설정", "🐂 [부록] 사료 배합 최적화"])
+tab_a, tab_b, tab_analysis, tab_revenue, tab_cost = st.tabs(["교체율 설정 A", "교체율 설정 B", "분석: 교체율 vs 개량효과", " [부록] 비육우 매출 상세", " [부록] 비용 상세 설정"])
 
 # ---------------------------
 # [중요] 탭 내용 채우기 (With blocks)
@@ -453,155 +452,3 @@ with tab_cost:
     st.session_state.df_cost_breed = edited_breed_cost
     st.session_state.df_cost_fatten = edited_fatten_cost
 
-# --- Tab Feed Optimization (V5.4 Logic) ---
-with tab_feed_opt:
-    st.header("6. 사료 배합비 최적화 (Feed Optimizer)")
-    st.markdown("사용자 입력(체중, 체중비, 영양소) 기반 **최소 비용 배합비**를 계산합니다.")
-    
-    # [1] Input Section
-    fc1, fc2, fc3 = st.columns(3)
-    
-    with fc1:
-        st.subheader("1. 섭취량 설정")
-        input_weight = st.number_input("평균 체중 (kg)", value=450, step=10)
-        input_ratio = st.number_input("체중비 (%)", value=2.0, step=0.1)
-        target_dmi = input_weight * (input_ratio / 100)
-        st.metric("목표 섭취량 (DMI)", f"{target_dmi:.2f} kg/일")
-
-    with fc2:
-        st.subheader("2. 영양소 요구량 (최소)")
-        limit_tdn = st.number_input("TDN 최소 (%)", value=70.0)
-        limit_cp = st.number_input("CP 최소 (%)", value=13.0)
-        limit_ndf = st.number_input("NDF 최소 (%)", value=30.0)
-
-    with fc3:
-        st.subheader("3. 가격 변동 및 선호")
-        price_hike = st.slider("사료 단가 인상 시뮬레이션 (%)", 0, 50, 0)
-        df_feeds_temp = pd.DataFrame(st.session_state.feeds_db)
-        preferred_feeds = st.multiselect("선호 사료 (최우선 사용)", df_feeds_temp['name'].tolist(), default=[])
-
-    st.markdown("---")
-    
-    # [2] Feed Management & Logic
-    col_setup, col_result = st.columns([1, 1.2])
-    
-    with col_setup:
-        st.subheader("원료 단가 관리 (Expanders)")
-        
-        all_feeds = st.session_state.feeds_db
-        categories = sorted(list(set(f['cat'] for f in all_feeds)))
-        
-        updated_feeds = []
-        for cat in categories:
-            with st.expander(f"{cat} 관리", expanded=False):
-                cat_feeds = [f for f in all_feeds if f['cat'] == cat]
-                df_cat = pd.DataFrame(cat_feeds)
-                edited_df = st.data_editor(
-                    df_cat,
-                    column_config={"name": "원료명", "price": st.column_config.NumberColumn("단가(원)", format="%d"), "tdn": "TDN", "cp": "CP"},
-                    hide_index=True,
-                    key=f"editor_{cat}"
-                )
-                updated_feeds.extend(edited_df.to_dict('records'))
-        
-        st.session_state.feeds_db = updated_feeds
-        
-        def optimize_feed_logic(feeds, dmi, min_tdn, min_cp, min_ndf, preferred_list, hike_pct):
-            df = pd.DataFrame(feeds)
-            df['final_price'] = df['price'] * (1 + hike_pct/100)
-            prices = df['final_price'].values
-            n = len(df)
-            
-            cons_base = [
-                {'type': 'eq', 'fun': lambda x: np.sum(x) - dmi}, # Total Weight
-                {'type': 'ineq', 'fun': lambda x: np.sum(x * df['tdn'].values) - dmi * min_tdn}, # TDN
-                {'type': 'ineq', 'fun': lambda x: np.sum(x * df['cp'].values) - dmi * min_cp}, # CP
-                {'type': 'ineq', 'fun': lambda x: np.sum(x * df['ndf'].values) - dmi * min_ndf} # NDF
-            ]
-            bnds = tuple((0, dmi) for _ in range(n))
-            x0 = np.ones(n) * (dmi / n)
-            
-            if preferred_list:
-                pref_indices = [i for i, row in df.iterrows() if row['name'] in preferred_list]
-                cons_s1 = cons_base + [{'type': 'ineq', 'fun': lambda x: np.sum(x[pref_indices]) - (dmi * 0.1)}]
-                res = minimize(lambda x: np.dot(x, prices), x0, method='SLSQP', bounds=bnds, constraints=cons_s1)
-                if res.success: return res, "1단계: 선호 사료 포함 최적화 성공"
-
-            res = minimize(lambda x: np.dot(x, prices), x0, method='SLSQP', bounds=bnds, constraints=cons_base)
-            if res.success: return res, "2단계: 최소 비용 최적화 성공 (선호 조건 제외)"
-            
-            def error_objective(x):
-                curr_tdn = np.sum(x * df['tdn'].values) / dmi
-                curr_cp = np.sum(x * df['cp'].values) / dmi
-                return (curr_tdn - min_tdn)**2 + (curr_cp - min_cp)**2 + (np.sum(x) - dmi)**2
-            
-            res = minimize(error_objective, x0, method='SLSQP', bounds=bnds)
-            return res, "3단계: 영양소 오차 최소화 (목표 미달 가능)"
-
-        btn_calc = st.button("🚀 최적 배합비 계산", type="primary")
-
-    with col_result:
-        st.subheader("계산 결과")
-        if btn_calc:
-            res, msg = optimize_feed_logic(updated_feeds, target_dmi, limit_tdn, limit_cp, limit_ndf, preferred_feeds, price_hike)
-            
-            if res.success:
-                st.success(msg)
-                amounts = res.x
-                df_res = pd.DataFrame(updated_feeds)
-                df_res['급여량(kg)'] = amounts
-                df_res['비율(%)'] = (amounts / target_dmi) * 100
-                df_res['단가(인상후)'] = df_res['price'] * (1 + price_hike/100)
-                df_res['비용(원)'] = df_res['급여량(kg)'] * df_res['단가(인상후)']
-                
-                df_display = df_res[df_res['급여량(kg)'] > 0.001].copy()
-                
-                total_cost = df_display['비용(원)'].sum()
-                real_tdn = np.sum(df_display['급여량(kg)'] * df_display['tdn']) / target_dmi
-                real_cp = np.sum(df_display['급여량(kg)'] * df_display['cp']) / target_dmi
-                
-                m1, m2, m3 = st.columns(3)
-                m1.metric("일일 사료비", f"{int(total_cost):,}원")
-                m2.metric("실제 TDN", f"{real_tdn:.1f}%", f"{real_tdn-limit_tdn:.1f}")
-                m3.metric("실제 CP", f"{real_cp:.1f}%", f"{real_cp-limit_cp:.1f}")
-                
-                def highlight_preferred(row):
-                    if row['name'] in preferred_feeds:
-                        return ['background-color: #d0e8f2; color: black'] * len(row)
-                    return [''] * len(row)
-
-                st.dataframe(
-                    df_display[['name', 'cat', '급여량(kg)', '비율(%)', '비용(원)']].style.apply(highlight_preferred, axis=1).format({
-                        "급여량(kg)": "{:.2f}", "비율(%)": "{:.1f}", "비용(원)": "{:,.0f}"
-                    }),
-                    use_container_width=True
-                )
-                
-                pie = alt.Chart(df_display).mark_arc(outerRadius=100).encode(
-                    theta=alt.Theta("급여량(kg)", stack=True),
-                    color=alt.Color("name", legend=alt.Legend(title="원료명")),
-                    tooltip=["name", alt.Tooltip("급여량(kg)", format=".2f"), alt.Tooltip("비율(%)", format=".1f")]
-                )
-                st.altair_chart(pie, use_container_width=True)
-                
-            else:
-                st.error("해를 찾을 수 없습니다.")
-
-    # [3] Bottom Static Info
-    st.markdown("---")
-    st.markdown("#### 📝 참고: 영양소 계산 산식 및 고정 정보")
-    
-    info_c1, info_c2 = st.columns(2)
-    with info_c1:
-        st.markdown("**1. 주요 계산 산식**")
-        st.latex(r"DMI_{target} = Weight \times \frac{\text{Ratio}}{100}")
-        st.latex(r"Cost_{daily} = \sum (DMI \times \frac{Ratio_i}{100} \times Price_i)")
-
-    with info_c2:
-        st.markdown("**2. 한우 사양표준 권장치 (참고)**")
-        ref_data = {
-            "단계": ["번식우(임신)", "번식우(포유)", "비육 전기", "비육 후기"],
-            "TDN(%)": [58.0, 62.0, 70.0, 74.0],
-            "CP(%)": [10.0, 12.0, 13.0, 11.0]
-        }
-        st.dataframe(pd.DataFrame(ref_data), use_container_width=True, hide_index=True)
