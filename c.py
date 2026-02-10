@@ -32,7 +32,7 @@ if 'cost_items' not in st.session_state:
     st.session_state.df_cost_breed = pd.DataFrame(data_breed)
     st.session_state.df_cost_fatten = pd.DataFrame(data_fatten)
 
-# [매출 데이터] - 기존 원 단위 유지 (사용자 요청: 비용만 개선)
+# [매출 데이터]
 if 'df_cow' not in st.session_state:
     data_cow = {
         "Grade": ["1++A", "1++B", "1++C", "1+A", "1+B", "1+C", "1A", "1B", "1C", "2A", "2B", "2C", "3A", "3B", "3C", "D"],
@@ -90,13 +90,13 @@ def input_with_comma(label, value, key=None):
     except:
         return float(value)
 
-# [수정] 천원 단위 컬럼 존재 시 자동으로 1000을 곱해 반환
+# [수정] 비용 계산 함수 (모드에 따라 제외 항목 처리)
 def calculate_cost_from_table(df, mode="경영비"):
     exclude_items = ["자가노동비", "자본용역비", "토지용역비"]
     total = 0
     for _, row in df.iterrows():
         item = row['항목']
-        # '금액(천원/년)' 컬럼이 있으면 1000 곱하기, 없으면 그냥 더하기
+        # '금액(천원/년)' 컬럼이 있으면 1000 곱하기
         if '금액(천원/년)' in df.columns:
             amount = row['금액(천원/년)'] * 1000
         else:
@@ -106,6 +106,20 @@ def calculate_cost_from_table(df, mode="경영비"):
             continue
         total += amount
     return total
+
+# [추가] 기회비용(제외되는 항목) 합계만 따로 계산하는 헬퍼 함수
+def calculate_opportunity_cost(df):
+    target_items = ["자가노동비", "자본용역비", "토지용역비"]
+    total_opp = 0
+    for _, row in df.iterrows():
+        item = row['항목']
+        if item in target_items:
+            if '금액(천원/년)' in df.columns:
+                amount = row['금액(천원/년)'] * 1000
+            else:
+                amount = row['금액(원/년)']
+            total_opp += amount
+    return total_opp
 
 def calculate_avg_price(df):
     weighted_sum = 0
@@ -120,10 +134,10 @@ st.title("🐂 한우 통합 플랫폼")
 # ---------------------------
 with st.sidebar:
     st.header("1. 분석 기준 설정")
-    cost_mode = st.radio("비용 산출 기준", ["경영비 기준 (실지출, 일반비소계)", "생산비 기준 (비용합계, 자가노동비 등 포함)"], index=0)
+    cost_mode = st.radio("비용 산출 기준", ["경영비 기준 (실지출, 일반비소계)", "생산비 기준 (비용합게, 기회비용(자가노동비 등) 포함)"], index=0)
     mode_key = "경영비" if "경영비" in cost_mode else "생산비"
     
-    # 여기서 calculate 함수가 호출되면서 천원 단위가 원 단위로 자동 변환됨
+    # 계산 로직
     calc_breed_cost = calculate_cost_from_table(st.session_state.df_cost_breed, mode_key)
     calc_fatten_cost = calculate_cost_from_table(st.session_state.df_cost_fatten, mode_key)
     calc_cow_price = calculate_avg_price(st.session_state.df_cow)
@@ -136,9 +150,8 @@ with st.sidebar:
         base_cows = st.number_input("기초 번식우(두)", value=100, step=10, format="%d")
         if 'conception_rate' not in st.session_state: st.session_state.conception_rate = 0.70
         
-        # 사이드바에서 수태율 관리 (마스터 값)
         conception_rate = st.number_input("수태율 (0~1)", value=st.session_state.conception_rate, step=0.01, key='sb_concept')
-        st.session_state.conception_rate = conception_rate # 동기화
+        st.session_state.conception_rate = conception_rate
 
         female_birth_ratio = st.number_input("암 성비 (0~1)", value=0.50, step=0.01)
         heifer_nonprofit_months = st.number_input("대체우 무수익(월)", value=18)
@@ -429,9 +442,7 @@ with tab_revenue:
     edited_steer = st.data_editor(st.session_state.df_steer, column_config={"Ratio(%)": st.column_config.NumberColumn("출현율(%)", format="%.1f%%"), "Price(KRW/kg)": st.column_config.NumberColumn("지육단가(원/kg)", format="%d"), "Weight(kg)": st.column_config.NumberColumn("도체중(kg)", format="%d")}, use_container_width=True, key="editor_steer")
     st.success(f"계산된 수비육우 평균 가격: **{fmt_money(calc_steer_price)}원**")
     
-    # [추가] 매출 산출 근거 표
     st.markdown("#### 💡 매출 산출 상세 내역")
-    # 예시로 상위 3개 등급만 보여주거나 요약
     rev_breakdown = []
     rev_breakdown.append({"구분": "암비육우", "계산식": "Σ (지육단가 × 도체중 × 출현율)", "결과": f"{fmt_money(calc_cow_price)}원"})
     rev_breakdown.append({"구분": "수비육우", "계산식": "Σ (지육단가 × 도체중 × 출현율)", "결과": f"{fmt_money(calc_steer_price)}원"})
@@ -445,7 +456,6 @@ with tab_cost:
     col_c1, col_c2 = st.columns(2)
     with col_c1:
         st.subheader("① 번식우 유지비 상세(단위:천원)")
-        # [수정] 천원 단위로 표시되도록 포맷 변경 및 컬럼 설정
         edited_breed_cost = st.data_editor(
             st.session_state.df_cost_breed, 
             key="editor_cost_breed", 
@@ -458,7 +468,6 @@ with tab_cost:
         
         st.markdown("---")
         st.markdown("**송아지 생산 관련 입력**")
-        # [수정] 수태율 수정 불가 (disabled=True)
         st.number_input("수태율 (0~1)", value=st.session_state.conception_rate, disabled=True, key='cost_concept_disp')
         st.caption("※ 수태율은 사이드바 또는 'A. 농장 공통 설정'에서 변경하세요.")
         
@@ -467,7 +476,6 @@ with tab_cost:
 
     with col_c2:
         st.subheader("② 비육우 유지비 상세(단위:천원)")
-        # [수정] 천원 단위로 표시
         edited_fatten_cost = st.data_editor(
             st.session_state.df_cost_fatten, 
             key="editor_cost_fatten", 
@@ -484,18 +492,33 @@ with tab_cost:
 
     st.divider()
     
-    # [추가] 상세 산출 내역 표시
+    # [추가] 상세 산출 내역 표시 (기회비용 차감 로직 구체화)
     st.markdown("#### 💡 비용 산출 상세 내역")
+    
+    # 기회비용 합계 계산
+    opp_cols = ["자가노동비", "자본용역비", "토지용역비"]
+    opp_sum_breed = calculate_opportunity_cost(st.session_state.df_cost_breed)
+    opp_sum_fatten = calculate_opportunity_cost(st.session_state.df_cost_fatten)
+    
+    # 번식우 전체 합계(생산비 기준)
+    total_breed_prod = calculate_cost_from_table(st.session_state.df_cost_breed, mode="생산비")
+    total_fatten_prod = calculate_cost_from_table(st.session_state.df_cost_fatten, mode="생산비")
+    
     cost_breakdown_data = []
     
-    # 번식우 합계 로직 설명
+    # 1. 번식우
+    if mode_key == "경영비":
+        formula_breed = f"전체 합계({fmt_money(total_breed_prod)}) - 기회비용({fmt_money(opp_sum_breed)})"
+    else:
+        formula_breed = f"전체 합계(기회비용 {fmt_money(opp_sum_breed)} 포함)"
+        
     cost_breakdown_data.append({
         "항목": f"번식우 유지비 ({mode_key})",
-        "산출식": "표 입력값 합계 × 1,000",
+        "산출식": formula_breed,
         "금액": f"{fmt_money(calc_breed_cost)}원"
     })
     
-    # 송아지 생산비 계산
+    # 2. 송아지
     if st.session_state.conception_rate > 0:
         calf_prod = (calc_breed_cost / st.session_state.conception_rate) - bp_income
         cost_breakdown_data.append({
@@ -504,13 +527,22 @@ with tab_cost:
             "금액": f"{fmt_money(calf_prod)}원"
         })
     
+    # 3. 비육우
+    if mode_key == "경영비":
+        formula_fatten = f"전체 합계({fmt_money(total_fatten_prod)}) - 기회비용({fmt_money(opp_sum_fatten)})"
+    else:
+        formula_fatten = f"전체 합계(기회비용 {fmt_money(opp_sum_fatten)} 포함)"
+        
     cost_breakdown_data.append({
         "항목": f"비육우 유지비 ({mode_key})",
-        "산출식": "표 입력값 합계 × 1,000",
+        "산출식": formula_fatten,
         "금액": f"{fmt_money(calc_fatten_cost)}원"
     })
     
     st.table(pd.DataFrame(cost_breakdown_data))
+    
+    if mode_key == "경영비":
+        st.caption(f"※ 제외된 기회비용 항목: {', '.join(opp_cols)}")
 
     st.session_state.df_cost_breed = edited_breed_cost
     st.session_state.df_cost_fatten = edited_fatten_cost
@@ -664,7 +696,7 @@ with tab_sim:
     cur_cp = sum([r * f['cp'] for r, f in zip(user_ratios, feeds)]) / 100
     cur_ndf = sum([r * f['ndf'] for r, f in zip(user_ratios, feeds)]) / 100
 
-    # [추가] 일일 사료비 계산
+    # 일일 사료비 계산
     total_daily_cost = 0
     for r, f in zip(user_ratios, feeds):
         total_daily_cost += (dmi * (r / 100)) * f['price']
@@ -678,7 +710,6 @@ with tab_sim:
     st.divider()
     st.subheader("분석 결과")
     
-    # [수정] 결과 표시 컬럼 3개 -> 4개 (사료비 추가)
     r1, r2, r3, r4 = st.columns(4)
     r1.metric("TDN (에너지)", f"{cur_tdn:.2f}%", f"목표: {std['tdn']}%")
     r1.caption(f"판정: {check(cur_tdn, std['tdn'])}")
@@ -686,8 +717,6 @@ with tab_sim:
     r2.caption(f"판정: {check(cur_cp, std['cp'])}")
     r3.metric("NDF (섬유소)", f"{cur_ndf:.2f}%", f"목표: {std['ndf']}%")
     r3.caption(f"판정: {check(cur_ndf, std['ndf'])}")
-    
-    # [추가] 일일 사료비 메트릭
     r4.metric("일일 사료비", f"{int(total_daily_cost):,}원", f"DMI {dmi:.1f}kg 기준")
 
     st.divider()
@@ -709,7 +738,6 @@ with tab_sim:
         st.markdown("#### 상세 계산 내역")
         st.write(f"**총 DMI: {dmi:.2f} kg** (사이드바 설정 기준)")
         
-        # [수정] 3가지 계산식 모두 표시
         with st.expander("영양소 계산식 보기"):
             terms_tdn = [f"{r}%×{f['tdn']}" for r, f in zip(user_ratios, feeds) if r > 0]
             terms_cp = [f"{r}%×{f['cp']}" for r, f in zip(user_ratios, feeds) if r > 0]
@@ -740,12 +768,9 @@ with tab_sim:
 
     st.divider()
     
-    # [추가] 원료별 영양성분 및 단가표
     st.subheader(" 원료별 영양성분 및 단가표")
     df_feeds_info = pd.DataFrame(st.session_state.feeds_db)
-    # 필요한 컬럼만 선택 및 순서 정렬
     df_feeds_info = df_feeds_info[['name', 'cat', 'price', 'tdn', 'cp', 'ndf']]
-    # 컬럼명 한글화
     df_feeds_info.columns = ['원료명', '분류', '단가(원/kg)', 'TDN(%)', 'CP(%)', 'NDF(%)']
     
     st.dataframe(
