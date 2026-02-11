@@ -840,7 +840,7 @@ with tab_sim:
 
     st.divider()
     
-    st.subheader("📊 원료별 영양성분 및 단가표")
+    st.subheader("원료별 영양성분 및 단가표")
     df_feeds_info = pd.DataFrame(st.session_state.feeds_db)
     df_feeds_info = df_feeds_info[['name', 'cat', 'price', 'tdn', 'cp', 'ndf']]
     df_feeds_info.columns = ['원료명', '분류', '단가(원/kg)', 'TDN(%)', 'CP(%)', 'NDF(%)']
@@ -856,3 +856,4 @@ with tab_sim:
             "NDF(%)": st.column_config.NumberColumn(format="%.1f%%"),
         }
     )
+
