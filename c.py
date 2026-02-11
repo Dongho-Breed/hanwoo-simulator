@@ -7,7 +7,7 @@ import plotly.express as px
 from scipy.optimize import minimize
 
 # 페이지 설정
-st.set_page_config(page_title="🐂 한우 경영·사료 최적화 플랫폼", layout="wide")
+st.set_page_config(page_title="🐂 한우 통합 플랫폼", layout="wide")
 
 # ---------------------------
 # 0. 데이터 초기화
@@ -123,14 +123,14 @@ def calculate_avg_price(df):
         weighted_sum += (row["Ratio(%)"] / 100) * (row["Price(KRW/kg)"] * row["Weight(kg)"])
     return int(weighted_sum)
 
-st.title("🐂 한우 경영·사료 최적화 플랫폼")
+st.title("🐂 한우 통합 플랫폼")
 
 # ---------------------------
 # 2. 사이드바 UI
 # ---------------------------
 with st.sidebar:
     st.header("1. 분석 기준 설정")
-    cost_mode = st.radio("비용 산출 기준", ["경영비 기준 (실지출, 일반비소계)", "생산비 기준 (비용합계, 기회비용(자가노동비 등) 포함)"], index=0)
+    cost_mode = st.radio("비용 산출 기준", ["경영비 기준 (실지출)", "생산비 기준 (기회비용 포함)"], index=0)
     mode_key = "경영비" if "경영비" in cost_mode else "생산비"
     
     calc_breed_cost = calculate_cost_from_table(st.session_state.df_cost_breed, mode_key)
@@ -202,6 +202,7 @@ def compute_scenario(name, base_cows, conception_rate, female_birth_ratio, heife
     base_cows = clamp_int(base_cows, 1)
     annual_culls = clamp_int(annual_culls, 0)
 
+    # 수익 계산 (기존과 동일)
     val_cull = annual_culls * price_cull_cow
     val_calf_f = clamp_int(female_calf_sell) * price_calf_female
     val_calf_m = clamp_int(male_calf_sell) * price_calf_male
@@ -210,22 +211,33 @@ def compute_scenario(name, base_cows, conception_rate, female_birth_ratio, heife
     val_byprod = base_cows * by_product_income_cow
     rev_internal = val_cull + val_calf_f + val_calf_m + val_fat_out_f + val_fat_out_m + val_byprod
     
+    # ---------------------------
+    # [수정된 비용 계산 로직]
+    # 사용자의 요청: "대체우 육성, 자가 암/수 비육, 외부 사육유지비"는 기간 입력값 무시하고 1년치 비용만 계산
+    # ---------------------------
+
+    # 1. 기초 번식우 유지 (기본 1년)
     cost_breeding_main = base_cows * cow_cost_y
-    heifer_years = clamp_int(heifer_nonprofit_months, 0) / 12.0
-    cost_breeding_repl = (annual_culls * heifer_years) * cow_cost_y
+    
+    # 2. 대체우 육성 (기간 무시 -> 1년 비용 적용)
+    # 기존: (annual_culls * heifer_years) * cow_cost_y
+    # 변경: annual_culls * cow_cost_y
+    cost_breeding_repl = annual_culls * cow_cost_y
+
+    # 3. 송아지 생산/손실 (송아지 단계는 기간 반영 - 기존 유지)
     if conception_rate > 0:
         calf_prod_cost_unit = (cow_cost_y / conception_rate) - by_product_income_cow
     else:
         calf_prod_cost_unit = 0
     val_kpn_loss = clamp_int(kpn_male) * calf_prod_cost_unit * (clamp_int(kpn_exit_months, 0) / 12.0)
     
-    fatten_period_f = max(0, ship_m_female - calf_common_months) / 12.0
-    fatten_period_m = max(0, ship_m_male - calf_common_months) / 12.0
-    cost_per_f = fatten_period_f * cost_fatten_avg_y
-    cost_per_m = fatten_period_m * cost_fatten_avg_y
-    val_fat_cost_f = clamp_int(female_fatten_in) * cost_per_f
-    val_fat_cost_m = clamp_int(male_fatten_in) * cost_per_m
+    # 4. 자가 비육 비용 (기간 무시 -> 1년 비용 적용)
+    # 기존: val_fat_cost_f = female_fatten_in * (fatten_period_f * cost_fatten_avg_y)
+    # 변경: val_fat_cost_f = female_fatten_in * cost_fatten_avg_y
+    val_fat_cost_f = clamp_int(female_fatten_in) * cost_fatten_avg_y
+    val_fat_cost_m = clamp_int(male_fatten_in) * cost_fatten_avg_y
     
+    # 5. 폐사 손실 (송아지 단계는 기간 반영 - 기존 유지)
     cost_loss_head = calf_prod_cost_unit * (loss_months / 12.0)
     val_loss_f = female_loss * cost_loss_head
     val_loss_m = male_loss * cost_loss_head
@@ -233,14 +245,22 @@ def compute_scenario(name, base_cows, conception_rate, female_birth_ratio, heife
     cost_internal = cost_breeding_main + cost_breeding_repl + val_kpn_loss + val_fat_cost_f + val_fat_cost_m + val_loss_f + val_loss_m
     net_internal = rev_internal - cost_internal
 
+    # 6. 외부 비육 (기간 무시 -> 1년 비용 적용)
     val_ext_rev = ext_sell_n * ext_sell_p
     val_ext_buy = ext_buy_n * ext_buy_p
-    val_ext_maint = (ext_buy_n * ext_period_y) * ext_cost_y
+    # 기존: (ext_buy_n * ext_period_y) * ext_cost_y
+    # 변경: ext_buy_n * ext_cost_y
+    val_ext_maint = ext_buy_n * ext_cost_y
+    
     net_external = val_ext_rev - val_ext_buy - val_ext_maint
 
     net_final = net_internal + net_external
     rev_final = rev_internal + val_ext_rev
     cost_final = cost_internal + val_ext_buy + val_ext_maint
+
+    # 비육 기간 계산 (참고용으로는 남겨둠)
+    fatten_period_f = max(0, ship_m_female - calf_common_months) / 12.0
+    fatten_period_m = max(0, ship_m_male - calf_common_months) / 12.0
 
     cost_breakdown = [
         {"Category": "기초 번식우 유지", "Value": cost_breeding_main + cost_breeding_repl},
@@ -283,15 +303,18 @@ def make_excel_view(res):
     data.append({"구분": "수익", "항목": "암비육우 출하", "산출 근거": f"{res['n_fat_out_f']}두 * {fmt_money(res['p_fat_f'])}", "금액 (Amount)": res["v_fat_out_f"]})
     data.append({"구분": "수익", "항목": "수비육우 출하", "산출 근거": f"{res['n_fat_out_m']}두 * {fmt_money(res['p_fat_m'])}", "금액 (Amount)": res["v_fat_out_m"]})
     data.append({"구분": "수익", "항목": "부산물 수입", "산출 근거": f"{res['n_base']}두 * {fmt_money(res['unit_byprod'])}", "금액 (Amount)": res["v_byprod"]})
+    
+    # [수정] 비용 항목 산출 근거 표기 변경 (기간 제거, 1년 기준)
     data.append({"구분": "비용", "항목": "기초 번식우 유지", "산출 근거": f"{res['n_base']}두 * {fmt_money(res['cost_y_cow'])}", "금액 (Amount)": -res["c_breed_main"]})
-    data.append({"구분": "비용", "항목": "대체우 육성", "산출 근거": f"{res['n_repl']}두 * ({res['months_heifer']}/12) * {fmt_money(res['cost_y_cow'])}", "금액 (Amount)": -res["c_breed_repl"]})
-    data.append({"구분": "비용", "항목": "자가 암비육", "산출 근거": f"{res['n_fat_in_f']}두 * {res['period_f']:.1f}년 * {fmt_money(res['cost_avg_fatten'])}", "금액 (Amount)": -res["c_fat_in_f"]})
-    data.append({"구분": "비용", "항목": "자가 수비육", "산출 근거": f"{res['n_fat_in_m']}두 * {res['period_m']:.1f}년 * {fmt_money(res['cost_avg_fatten'])}", "금액 (Amount)": -res["c_fat_in_m"]})
+    data.append({"구분": "비용", "항목": "대체우 육성", "산출 근거": f"투입 {res['n_repl']}두 * 1년 * {fmt_money(res['cost_y_cow'])}", "금액 (Amount)": -res["c_breed_repl"]})
+    data.append({"구분": "비용", "항목": "자가 암비육", "산출 근거": f"투입 {res['n_fat_in_f']}두 * 1년 * {fmt_money(res['cost_avg_fatten'])}", "금액 (Amount)": -res["c_fat_in_f"]})
+    data.append({"구분": "비용", "항목": "자가 수비육", "산출 근거": f"투입 {res['n_fat_in_m']}두 * 1년 * {fmt_money(res['cost_avg_fatten'])}", "금액 (Amount)": -res["c_fat_in_m"]})
+    
     data.append({"구분": "비용(손실)", "항목": "암송아지 폐사", "산출 근거": f"{res['n_loss_f']}두 * ({fmt_money(res['cost_y_cow'])}/{res['rate_concept']}) * ({res['loss_months']}/12)", "금액 (Amount)": -res["val_loss_f"]})
     data.append({"구분": "비용(손실)", "항목": "수송아지 폐사", "산출 근거": f"{res['n_loss_m']}두 * ({fmt_money(res['cost_y_cow'])}/{res['rate_concept']}) * ({res['loss_months']}/12)", "금액 (Amount)": -res["val_loss_m"]})
     data.append({"구분": "외부", "항목": "비육우 매출", "산출 근거": f"{res['n_ext_sell']}두 * {fmt_money(res['p_ext_sell'])}", "금액 (Amount)": res["v_ext_rev"]})
     data.append({"구분": "외부", "항목": "송아지 매입", "산출 근거": f"{res['n_ext_buy']}두 * {fmt_money(res['p_ext_buy'])}", "금액 (Amount)": -res["c_ext_buy"]})
-    data.append({"구분": "외부", "항목": "사육 유지비", "산출 근거": f"{res['n_ext_buy']}두 x {res['period_ext']}년 x {fmt_money(res['cost_y_ext'])}", "금액 (Amount)": -res["c_ext_maint"]})
+    data.append({"구분": "외부", "항목": "사육 유지비", "산출 근거": f"매입 {res['n_ext_buy']}두 * 1년 * {fmt_money(res['cost_y_ext'])}", "금액 (Amount)": -res["c_ext_maint"]})
     data.append({"구분": "결과", "항목": "순이익 (Net Profit)", "산출 근거": "수익 - 비용", "금액 (Amount)": res["Net Final"]})
     return pd.DataFrame(data)
 
@@ -322,43 +345,35 @@ def get_alloc_inputs(tab, key):
     with tab:
         st.info(f"생산 가이드 | 암송아지: **{birth_female:.1f}두** | 수송아지: **{birth_male:.1f}두**")
         c1, c2, c3 = st.columns(3)
-        
-        # 1. 교체율 및 대체우 설정 (c1)
         culls = c1.number_input(f"[{key}] 연간 도태(두)", value=15, key=f"c_{key}")
         repl_rate = (culls / base_cows) * 100 if base_cows > 0 else 0
         c1.metric(f"교체율 ({key})", f"{repl_rate:.1f}%")
         
-        # 2. 암송아지 분배 (c2)
+        # 암송아지
         c2.markdown(f"**[{key}] 암송아지 분배**")
         c2.text_input(f"대체우 선발 [고정]", value=f"{culls} (자동)", disabled=True, key=f"rd_{key}_{culls}")
         fsell = c2.number_input(f"판매(두)", value=0, key=f"fs_{key}")
         ffat_in = c2.number_input(f"자가비육 투입", value=10, key=f"fi_{key}")
         ffat_out = c2.number_input(f"자가비육 출하", value=10, key=f"fo_{key}")
-        
         if ffat_out > ffat_in: c2.error(f"오류: 투입({ffat_in}) < 출하({ffat_out})")
-        
         floss = c2.number_input(f"폐사(두)", value=0, key=f"fl_{key}")
         loss_months = c2.number_input(f"폐사 월령", value=4, key=f"lm_{key}")
 
-        # [추가됨] 암송아지 합계 검증
-        # 대체우(culls) + 판매 + 투입 + 폐사
+        # [검증] 암송아지 합계
         sum_female = culls + fsell + ffat_in + floss
         if sum_female > birth_female:
             c2.error(f"⚠️ 합계({sum_female}두)가 생산({birth_female:.1f}두)을 초과했습니다.")
 
-        # 3. 수송아지 분배 (c3)
+        # 수송아지
         c3.markdown(f"**[{key}] 수송아지 분배**")
         kpn = c3.number_input(f"KPN 위탁", value=10, key=f"k_{key}")
         msell = c3.number_input(f"판매(두)", value=0, key=f"ms_{key}")
         mfat_in = c3.number_input(f"자가비육 투입", value=25, key=f"mi_{key}")
         mfat_out = c3.number_input(f"자가비육 출하", value=25, key=f"mo_{key}")
-        
         if mfat_out > mfat_in: c3.error(f"오류: 투입({mfat_in}) < 출하({mfat_out})")
-        
         mloss = c3.number_input(f"폐사(두)", value=0, key=f"ml_{key}")
 
-        # [추가됨] 수송아지 합계 검증
-        # KPN + 판매 + 투입 + 폐사 (출하는 투입에서 나오는 것이므로 합계 검증에서는 제외하는 것이 논리적으로 맞습니다)
+        # [검증] 수송아지 합계
         sum_male = kpn + msell + mfat_in + mloss
         if sum_male > birth_male:
             c3.error(f"⚠️ 합계({sum_male}두)가 생산({birth_male:.1f}두)을 초과했습니다.")
@@ -440,8 +455,6 @@ with tab_analysis:
         premium_per_head = val_cw + val_ms + val_ema + val_bft
         
         # 2. Volume Calculation (Fattening Cattle Only)
-        # Target = Auto-fattened (F/M) + External Sales (Fattened)
-        # Note: Selling calves (n_calf_f/m) is excluded from carcass premium
         target_cattle_a = res_a['n_fat_out_f'] + res_a['n_fat_out_m'] + res_a['n_ext_sell']
         target_cattle_b = res_b['n_fat_out_f'] + res_b['n_fat_out_m'] + res_b['n_ext_sell']
         
@@ -466,13 +479,10 @@ with tab_analysis:
         ).properties(title="경제적 분석 결과 비교")
         st.altair_chart(chart, use_container_width=True)
 
-        # ---------------------------------------------------------------------
-        # DETAILED CALCULATION SECTION (NEW)
-        # ---------------------------------------------------------------------
+        # DETAILED CALCULATION SECTION
         st.divider()
         st.subheader("상세 계산 내역")
         
-        # Step 1
         st.markdown("**1. 1두당 개량 가치 (Premium) 산출**")
         df_prem = pd.DataFrame({
             "형질": ["도체중(CW)", "근내지방(MS)", "등심단면적(EMA)", "등지방(BFT)"],
@@ -483,7 +493,6 @@ with tab_analysis:
         st.dataframe(df_prem, hide_index=True, use_container_width=True)
         st.caption(f"합계 (두당 가치): {fmt_money(premium_per_head)}원")
         
-        # Step 2
         st.markdown("**2. 시나리오별 비육우 출하 두수 및 수익**")
         st.caption("※ 계산 대상: 자가비육 출하(암/수) + 외부비육 출하 (송아지 판매 제외)")
         df_vol = pd.DataFrame([
@@ -492,7 +501,6 @@ with tab_analysis:
         ])
         st.dataframe(df_vol, hide_index=True, use_container_width=True)
         
-        # Step 3
         st.markdown("**3. 최종 순이익 산출**")
         st.write("순이익 = (시나리오 B 유전적 수익) - (교체율 증가 비용)")
         st.write(f"{fmt_money(net_profit)}원 = {fmt_money(added_revenue_b)}원 - {fmt_money(added_cost)}원")
