@@ -132,7 +132,29 @@ with st.sidebar:
     st.header("1. 분석 기준 설정")
     cost_mode = st.radio("비용 산출 기준", ["경영비 기준 (실지출)", "생산비 기준 (기회비용 포함)"], index=0)
     mode_key = "경영비" if "경영비" in cost_mode else "생산비"
-    
+
+    # ── data_editor 변경값 선반영 ──────────────────────────────────────────
+    # data_editor는 위젯 키로 변경 내용을 즉시 세션에 노출한다.
+    # 사이드바 계산보다 먼저 반영해야 같은 렌더링 사이클에서 결과가 업데이트된다.
+    for _editor_key, _state_key in [
+        ("editor_cost_breed", "df_cost_breed"),
+        ("editor_cost_fatten", "df_cost_fatten"),
+        ("editor_cow",         "df_cow"),
+        ("editor_steer",       "df_steer"),
+    ]:
+        if _editor_key in st.session_state:
+            _edited = st.session_state[_editor_key]
+            # data_editor는 dict-of-edits 또는 DataFrame을 반환할 수 있음
+            if isinstance(_edited, pd.DataFrame):
+                st.session_state[_state_key] = _edited
+            elif isinstance(_edited, dict):
+                # {"edited_rows": {...}, "added_rows": [...], "deleted_rows": [...]}
+                _df = st.session_state[_state_key].copy()
+                for _row_idx, _changes in _edited.get("edited_rows", {}).items():
+                    for _col, _val in _changes.items():
+                        _df.at[int(_row_idx), _col] = _val
+                st.session_state[_state_key] = _df
+
     calc_breed_cost = calculate_cost_from_table(st.session_state.df_cost_breed, mode_key)
     calc_fatten_cost = calculate_cost_from_table(st.session_state.df_cost_fatten, mode_key)
     calc_cow_price = calculate_avg_price(st.session_state.df_cow)
@@ -509,9 +531,15 @@ with tab_analysis:
 with tab_revenue:
     st.header("4. 비육우 매출 상세 설정")
     edited_cow = st.data_editor(st.session_state.df_cow, column_config={"Ratio(%)": st.column_config.NumberColumn("출현율(%)", format="%.1f%%"), "Price(KRW/kg)": st.column_config.NumberColumn("지육단가(원/kg)", format="%d"), "Weight(kg)": st.column_config.NumberColumn("도체중(kg)", format="%d")}, use_container_width=True, key="editor_cow")
+    if isinstance(edited_cow, pd.DataFrame):
+        st.session_state.df_cow = edited_cow
+        calc_cow_price = calculate_avg_price(st.session_state.df_cow)
     st.success(f"계산된 암비육우 평균 가격: **{fmt_money(calc_cow_price)}원**")
     st.markdown("---")
     edited_steer = st.data_editor(st.session_state.df_steer, column_config={"Ratio(%)": st.column_config.NumberColumn("출현율(%)", format="%.1f%%"), "Price(KRW/kg)": st.column_config.NumberColumn("지육단가(원/kg)", format="%d"), "Weight(kg)": st.column_config.NumberColumn("도체중(kg)", format="%d")}, use_container_width=True, key="editor_steer")
+    if isinstance(edited_steer, pd.DataFrame):
+        st.session_state.df_steer = edited_steer
+        calc_steer_price = calculate_avg_price(st.session_state.df_steer)
     st.success(f"계산된 수비육우 평균 가격: **{fmt_money(calc_steer_price)}원**")
     
     st.markdown("#### 💡 매출 산출 상세 내역")
@@ -536,6 +564,9 @@ with tab_cost:
                 "금액(천원/년)": st.column_config.NumberColumn("금액(천원/년)", format="%d")
             }
         )
+        if isinstance(edited_breed_cost, pd.DataFrame):
+            st.session_state.df_cost_breed = edited_breed_cost
+            calc_breed_cost = calculate_cost_from_table(st.session_state.df_cost_breed, mode_key)
         st.success(f" 번식우 합계 ({mode_key}): **{fmt_money(calc_breed_cost)}원**")
         
         st.markdown("---")
@@ -556,6 +587,9 @@ with tab_cost:
                 "금액(천원/년)": st.column_config.NumberColumn("금액(천원/년)", format="%d")
             }
         )
+        if isinstance(edited_fatten_cost, pd.DataFrame):
+            st.session_state.df_cost_fatten = edited_fatten_cost
+            calc_fatten_cost = calculate_cost_from_table(st.session_state.df_cost_fatten, mode_key)
         st.success(f" 비육우 합계 ({mode_key}): **{fmt_money(calc_fatten_cost)}원**")
         st.markdown("---")
         stock_cost = st.number_input("가축비 (송아지 구입비, 참고용, 계산 X)", value=4000000, step=100000)
@@ -616,8 +650,7 @@ with tab_cost:
     if mode_key == "경영비":
         st.caption(f"※ 제외된 기회비용 항목: {', '.join(opp_cols)}")
 
-    st.session_state.df_cost_breed = edited_breed_cost
-    st.session_state.df_cost_fatten = edited_fatten_cost
+    # 세션 반영은 사이드바 선반영 로직에서 처리됨 (data_editor 키 기반)
 
 
 # =============================================================================
@@ -856,4 +889,3 @@ with tab_sim:
             "NDF(%)": st.column_config.NumberColumn(format="%.1f%%"),
         }
     )
-
