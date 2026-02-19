@@ -90,38 +90,49 @@ def input_with_comma(label, value, key=None):
     except:
         return float(value)
 
-def calculate_cost_from_table(df, mode="경영비"):
-    exclude_items = ["자가노동비", "자본용역비", "토지용역비"]
-    total = 0
-    for _, row in df.iterrows():
-        item = row['항목']
-        if '금액(천원/년)' in df.columns:
-            amount = row['금액(천원/년)'] * 1000
-        else:
-            amount = row['금액(원/년)']
-        if mode == "경영비" and item in exclude_items:
-            continue
-        total += amount
-    return total
+# 기회비용 항목을 set으로 관리 → 조회 O(1)
+_OPPORTUNITY_ITEMS: set[str] = {"자가노동비", "자본용역비", "토지용역비"}
 
-def calculate_opportunity_cost(df):
-    target_items = ["자가노동비", "자본용역비", "토지용역비"]
-    total_opp = 0
-    for _, row in df.iterrows():
-        item = row['항목']
-        if item in target_items:
-            if '금액(천원/년)' in df.columns:
-                amount = row['금액(천원/년)'] * 1000
-            else:
-                amount = row['금액(원/년)']
-            total_opp += amount
-    return total_opp
+def _get_amount_series(df: pd.DataFrame) -> pd.Series:
+    """단위 컬럼에 따라 원(원) 단위 금액 Series를 반환 — 벡터 연산 O(n)"""
+    match '금액(천원/년)' in df.columns:
+        case True:
+            return df['금액(천원/년)'] * 1000
+        case False:
+            return df['금액(원/년)']
 
-def calculate_avg_price(df):
-    weighted_sum = 0
-    for _, row in df.iterrows():
-        weighted_sum += (row["Ratio(%)"] / 100) * (row["Price(KRW/kg)"] * row["Weight(kg)"])
-    return int(weighted_sum)
+def calculate_cost_from_table(df: pd.DataFrame, mode: str = "경영비") -> float:
+    """
+    [기존] iterrows() 순회 + 매 행마다 컬럼 존재 확인 + item in list 검사 → O(n²)
+    [개선] 벡터 연산 + set 조회(O(1)) + match-case 분기 → O(n)
+    """
+    amounts = _get_amount_series(df)          # 단위 변환을 한 번에 벡터 처리
+
+    match mode:
+        case "경영비":
+            # 기회비용 항목을 제외하는 boolean mask 생성 → 행 순회 없이 벡터 필터
+            mask = ~df['항목'].isin(_OPPORTUNITY_ITEMS)
+            return float(amounts[mask].sum())
+        case "생산비" | _:
+            return float(amounts.sum())
+
+def calculate_opportunity_cost(df: pd.DataFrame) -> float:
+    """
+    [기존] iterrows() + item in list → O(n²)
+    [개선] isin() boolean mask + sum() → O(n)
+    """
+    amounts  = _get_amount_series(df)
+    mask     = df['항목'].isin(_OPPORTUNITY_ITEMS)   # set 조회라 각 행 O(1)
+    return float(amounts[mask].sum())
+
+def calculate_avg_price(df: pd.DataFrame) -> int:
+    """
+    [기존] iterrows() 로 행마다 곱셈·누적 → O(n), Python 루프 오버헤드 큼
+    [개선] pandas 벡터 연산으로 한 번에 처리 → O(n), C 레벨 실행
+    """
+    return int(
+        (df["Ratio(%)"] / 100 * df["Price(KRW/kg)"] * df["Weight(kg)"]).sum()
+    )
 
 st.title("🐂 한우 통합 플랫폼")
 
@@ -134,26 +145,38 @@ with st.sidebar:
     mode_key = "경영비" if "경영비" in cost_mode else "생산비"
 
     # ── data_editor 변경값 선반영 ──────────────────────────────────────────
-    # data_editor는 위젯 키로 변경 내용을 즉시 세션에 노출한다.
-    # 사이드바 계산보다 먼저 반영해야 같은 렌더링 사이클에서 결과가 업데이트된다.
-    for _editor_key, _state_key in [
-        ("editor_cost_breed", "df_cost_breed"),
-        ("editor_cost_fatten", "df_cost_fatten"),
-        ("editor_cow",         "df_cow"),
-        ("editor_steer",       "df_steer"),
-    ]:
-        if _editor_key in st.session_state:
-            _edited = st.session_state[_editor_key]
-            # data_editor는 dict-of-edits 또는 DataFrame을 반환할 수 있음
-            if isinstance(_edited, pd.DataFrame):
-                st.session_state[_state_key] = _edited
-            elif isinstance(_edited, dict):
-                # {"edited_rows": {...}, "added_rows": [...], "deleted_rows": [...]}
-                _df = st.session_state[_state_key].copy()
-                for _row_idx, _changes in _edited.get("edited_rows", {}).items():
-                    for _col, _val in _changes.items():
-                        _df.at[int(_row_idx), _col] = _val
-                st.session_state[_state_key] = _df
+    # [기존] for 루프로 4쌍 순회 + isinstance 조건 2개 → 매 렌더링마다 O(4 * E*C)
+    # [개선] dict 매핑으로 O(1) 조회 + match-case 분기 → O(E*C)
+    #        E = edited_rows 수, C = 변경된 컬럼 수
+
+    # editor 키 → 세션 상태 키를 O(1) 조회 가능한 dict로 관리
+    EDITOR_TO_STATE: dict[str, str] = {
+        "editor_cost_breed": "df_cost_breed",
+        "editor_cost_fatten": "df_cost_fatten",
+        "editor_cow":         "df_cow",
+        "editor_steer":       "df_steer",
+    }
+
+    for editor_key, state_key in EDITOR_TO_STATE.items():
+        if editor_key not in st.session_state:
+            continue                                   # 미렌더링 위젯은 즉시 skip
+
+        _edited = st.session_state[editor_key]
+
+        match type(_edited).__name__:                 # 반환 타입에 따라 처리 분기
+            case "DataFrame":                          # DataFrame 직접 반환 버전
+                st.session_state[state_key] = _edited
+
+            case "dict":                               # dict-of-edits 반환 버전
+                # 변경된 셀만 패치 → 전체 복사 최소화
+                _df = st.session_state[state_key].copy()
+                for row_idx, changes in _edited.get("edited_rows", {}).items():
+                    for col, val in changes.items():
+                        _df.at[int(row_idx), col] = val
+                st.session_state[state_key] = _df
+
+            case _:                                    # 예외 타입 → 무시
+                pass
 
     calc_breed_cost = calculate_cost_from_table(st.session_state.df_cost_breed, mode_key)
     calc_fatten_cost = calculate_cost_from_table(st.session_state.df_cost_fatten, mode_key)
@@ -597,53 +620,43 @@ with tab_cost:
         st.caption(f"※ (참고) 가축비 포함 총 투입비: {fmt_money(total_fatten_prod)}원")
 
     st.divider()
-    
-    # [추가] 상세 산출 내역 표시 (기회비용 차감 로직 구체화)
     st.markdown("#### 💡 비용 산출 상세 내역")
-    
-    # 기회비용 합계 계산
+
     opp_cols = ["자가노동비", "자본용역비", "토지용역비"]
-    opp_sum_breed = calculate_opportunity_cost(st.session_state.df_cost_breed)
+    opp_sum_breed  = calculate_opportunity_cost(st.session_state.df_cost_breed)
     opp_sum_fatten = calculate_opportunity_cost(st.session_state.df_cost_fatten)
-    
-    # 번식우 전체 합계(생산비 기준)
-    total_breed_prod = calculate_cost_from_table(st.session_state.df_cost_breed, mode="생산비")
+    total_breed_prod  = calculate_cost_from_table(st.session_state.df_cost_breed,  mode="생산비")
     total_fatten_prod = calculate_cost_from_table(st.session_state.df_cost_fatten, mode="생산비")
-    
-    cost_breakdown_data = []
-    
-    # 1. 번식우
-    if mode_key == "경영비":
-        formula_breed = f"전체 합계({fmt_money(total_breed_prod)}) - 기회비용({fmt_money(opp_sum_breed)})"
-    else:
-        formula_breed = f"전체 합계(기회비용 {fmt_money(opp_sum_breed)} 포함)"
-        
-    cost_breakdown_data.append({
-        "항목": f"번식우 유지비 ({mode_key})",
-        "산출식": formula_breed,
-        "금액": f"{fmt_money(calc_breed_cost)}원"
-    })
-    
-    # 2. 송아지
+
+    # [기존] 번식우/비육우 각각 if mode_key == "경영비" 분기 2회 → 코드 중복
+    # [개선] mode_key → formula 생성 함수를 dict로 매핑 → O(1) 조회, 분기 0회
+    FORMULA_MAP: dict[str, callable] = {
+        "경영비": lambda total, opp: f"전체 합계({fmt_money(total)}) - 기회비용({fmt_money(opp)})",
+        "생산비": lambda total, opp: f"전체 합계(기회비용 {fmt_money(opp)} 포함)",
+    }
+    make_formula = FORMULA_MAP[mode_key]   # O(1) 조회, 이후 분기 없이 재사용
+
+    cost_breakdown_data = [
+        {
+            "항목":  f"번식우 유지비 ({mode_key})",
+            "산출식": make_formula(total_breed_prod,  opp_sum_breed),
+            "금액":  f"{fmt_money(calc_breed_cost)}원",
+        },
+        {
+            "항목":  f"비육우 유지비 ({mode_key})",
+            "산출식": make_formula(total_fatten_prod, opp_sum_fatten),
+            "금액":  f"{fmt_money(calc_fatten_cost)}원",
+        },
+    ]
+
+    # 송아지 생산비: 수태율이 0이면 추가하지 않음
     if st.session_state.conception_rate > 0:
         calf_prod = (calc_breed_cost / st.session_state.conception_rate) - bp_income
-        cost_breakdown_data.append({
-            "항목": "송아지 생산비 (두당)",
+        cost_breakdown_data.insert(1, {
+            "항목":  "송아지 생산비 (두당)",
             "산출식": "(번식우 유지비 ÷ 수태율) - 부산물 수입",
-            "금액": f"{fmt_money(calf_prod)}원"
+            "금액":  f"{fmt_money(calf_prod)}원",
         })
-    
-    # 3. 비육우
-    if mode_key == "경영비":
-        formula_fatten = f"전체 합계({fmt_money(total_fatten_prod)}) - 기회비용({fmt_money(opp_sum_fatten)})"
-    else:
-        formula_fatten = f"전체 합계(기회비용 {fmt_money(opp_sum_fatten)} 포함)"
-        
-    cost_breakdown_data.append({
-        "항목": f"비육우 유지비 ({mode_key})",
-        "산출식": formula_fatten,
-        "금액": f"{fmt_money(calc_fatten_cost)}원"
-    })
     
     st.table(pd.DataFrame(cost_breakdown_data))
     
